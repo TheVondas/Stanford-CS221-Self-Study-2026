@@ -2,12 +2,21 @@ import argparse
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
+import gymnasium as gym
 from util_rl import DiscreteGymMDP, ContinuousGymMDP, simulate
 
 # Import implementations from the notebook-equivalent code
 import math, random
 from typing import List, Optional, Tuple, Any, Iterable, Callable
 import util_rl as util
+
+# Register custom Mountain Car that accepts max_speed
+gym.register(
+    id="CustomMountainCar-v0",
+    entry_point="custom_mountain_car:CustomMountainCarEnv",
+    max_episode_steps=200,
+    reward_threshold=-110.0,
+)
 
 
 def value_iteration(transitions, rewards, discount, epsilon=0.001, valid_actions=None, state_ids=None, action_ids=None):
@@ -293,7 +302,7 @@ def train_tabular(num_training_trials=1000, num_test_trials=20, num_runs=3, bins
     return all_train_rewards
 
 
-def train_function_approximation(num_training_trials=1000, num_test_trials=20, num_runs=3):
+def train_function_approximation(num_training_trials=1000, num_test_trials=20, num_runs=3, max_speed=None):
     all_train_rewards = []
 
     for run in range(num_runs):
@@ -301,7 +310,8 @@ def train_function_approximation(num_training_trials=1000, num_test_trials=20, n
         print(f"Trial {run + 1}/{num_runs}")
         print(f"{'='*60}")
 
-        mdp = ContinuousGymMDP("MountainCar-v0", discount=0.999)
+        env_id = "CustomMountainCar-v0" if max_speed is not None else "MountainCar-v0"
+        mdp = ContinuousGymMDP(env_id, max_speed=max_speed, discount=0.999)
         rl = FunctionApproxQLearning(
             feature_dim=36,
             feature_extractor=lambda s: fourier_feature_extractor(s, max_coeff=5, scale=[1, 15]),
@@ -353,6 +363,8 @@ def main():
                         help="Number of independent training runs")
     parser.add_argument("--bins", type=int, default=10,
                         help="Number of bins for discretization")
+    parser.add_argument("--max_speed", type=float, default=None,
+                        help="Max speed for Mountain Car (default: env default 0.07)")
     args = parser.parse_args()
 
     if args.agent == "value-iteration":
@@ -373,6 +385,7 @@ def main():
         all_rewards = train_function_approximation(
             num_training_trials=args.num_trials,
             num_runs=args.num_runs,
+            max_speed=args.max_speed,
         )
         plot_rewards(all_rewards, "Function Approximation Q-Learning: Training Reward", "fa_training_curves.png")
 

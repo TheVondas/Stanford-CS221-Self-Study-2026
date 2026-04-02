@@ -415,7 +415,25 @@ class ConstrainedQLearning(FunctionApproxQLearning):
             exploration_prob = exploration_prob / math.log(self.num_iters - 100000 + 1)
 
         # BEGIN_YOUR_CODE (our solution is 18 line(s) of code, but don't worry if you deviate from this)
-        raise Exception("Not implemented yet")
+        position, velocity = state[0], state[1]
+
+        # Determine which actions keep velocity below max_speed
+        valid_actions = []
+        for a in self.actions:
+            next_velocity = velocity + (a - 1) * self.force - math.cos(3 * position) * self.gravity
+            if self.max_speed is None or abs(next_velocity) < self.max_speed:
+                valid_actions.append(a)
+
+        if len(valid_actions) == 0:
+            return None
+
+        if explore and random.random() < exploration_prob:
+            return random.choice(valid_actions)
+
+        # Pick the valid action with the highest Q-value
+        q_values = [(self.get_q(state, a), a) for a in valid_actions]
+        best_action = max(q_values, key=lambda x: x[0])[1]
+        return best_action
         # END_YOUR_CODE
 
 ############################################################
