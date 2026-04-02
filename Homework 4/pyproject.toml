@@ -7,4 +7,5 @@ dependencies = [
     "gymnasium>=1.0.0",
     "numpy>=1.26.0",
     "pygame-ce>=2.5.0",
+    "matplotlib>=3.8.0",
 ]

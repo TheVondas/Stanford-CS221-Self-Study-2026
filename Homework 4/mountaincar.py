@@ -1,11 +1,13 @@
 import argparse
+import pickle
+import numpy as np
 import gymnasium as gym
-from util_rl import ContinuousGymMDP, DiscreteGymMDP, RandomAgent, simulate
+from util_rl import ContinuousGymMDP, DiscreteGymMDP, RandomAgent, FixedRLAlgorithm, simulate
 
 
 def main():
     parser = argparse.ArgumentParser(description="Mountain Car RL")
-    parser.add_argument("--agent", type=str, default="naive", choices=["naive"],
+    parser.add_argument("--agent", type=str, default="naive", choices=["naive", "value-iteration"],
                         help="Agent type to use")
     parser.add_argument("--mdp", type=str, default="discrete", choices=["continuous", "discrete"],
                         help="MDP type: continuous or discrete")
@@ -31,6 +33,17 @@ def main():
     # Create agent
     if args.agent == "naive":
         agent = RandomAgent(mdp.actions)
+    elif args.agent == "value-iteration":
+        with open("vi_weights.pkl", "rb") as f:
+            weights = pickle.load(f)
+        pi_actions = weights["pi_actions"]
+        # Build policy dict mapping discretized states to actions
+        pi = {}
+        for i in range(len(pi_actions)):
+            state = mdp.index_to_state(i)
+            if pi_actions[i] is not None:
+                pi[state] = pi_actions[i]
+        agent = FixedRLAlgorithm(pi, mdp.actions, exploration_prob=0.0)
 
     print(f"Running Mountain Car with {args.agent} agent ({args.mdp} MDP)")
     print(f"Number of trials: {args.num_trials}")
