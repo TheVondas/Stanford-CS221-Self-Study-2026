@@ -338,7 +338,9 @@ class FunctionApproxQLearning(util.RLAlgorithm):
 
     def get_q(self, state: np.ndarray, action: int) -> float:
         # BEGIN_YOUR_CODE (our solution is 3 line(s) of code, but don't worry if you deviate from this)
-        raise Exception("Not implemented yet")
+        features = self.feature_extractor(state)
+        action_idx = self.actions.index(action)
+        return float(features @ self.w[:, action_idx])
         # END_YOUR_CODE
 
     # This algorithm will produce an action given a state.
@@ -355,7 +357,10 @@ class FunctionApproxQLearning(util.RLAlgorithm):
             exploration_prob = exploration_prob / math.log(self.num_iters - 100000 + 1)
 
         # BEGIN_YOUR_CODE (our solution is 5 line(s) of code, but don't worry if you deviate from this)
-        raise Exception("Not implemented yet")
+        if explore and random.random() < exploration_prob:
+            return random.choice(self.actions)
+        q_values = [self.get_q(state, a) for a in self.actions]
+        return self.actions[int(np.argmax(q_values))]
         # END_YOUR_CODE
 
     # Call this function to get the step size to update the weights.
@@ -369,7 +374,17 @@ class FunctionApproxQLearning(util.RLAlgorithm):
     # step_size * (new_value - old_value) * features
     def incorporate_feedback(self, state: np.ndarray, action: int, reward: float, next_state: np.ndarray, terminal: bool) -> None:
         # BEGIN_YOUR_CODE (our solution is 10 line(s) of code, but don't worry if you deviate from this)
-        raise Exception("Not implemented yet")
+        eta = self.get_step_size()
+        features = self.feature_extractor(state)
+        action_idx = self.actions.index(action)
+        q_old = float(features @ self.w[:, action_idx])
+        if terminal:
+            v_next = 0.0
+        else:
+            q_next = [self.get_q(next_state, a) for a in self.actions]
+            v_next = max(q_next)
+        target = reward + self.discount * v_next
+        self.w[:, action_idx] += eta * (target - q_old) * features
         # END_YOUR_CODE
 
 ############################################################
