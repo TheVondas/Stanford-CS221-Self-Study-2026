@@ -123,6 +123,105 @@ class ModelBasedMonteCarlo(util.RLAlgorithm):
             self._sync_policy_indices()
 
 
+def fourier_feature_extractor(state, max_coeff=5, scale=None):
+    if scale is None:
+        scale = np.ones_like(state)
+    coeffs = np.arange(max_coeff + 1)
+    curr = coeffs * scale[0] * state[0]
+    for i in range(1, len(state)):
+        new = coeffs * scale[i] * state[i]
+        curr = (curr.reshape(-1, 1) + new.reshape(1, -1)).flatten()
+    return np.cos(np.pi * curr)
+
+
+class TabularQLearning(util.RLAlgorithm):
+    def __init__(self, actions, discount, num_states, state_to_index,
+                 exploration_prob=0.2, initial_q=0):
+        self.actions = list(actions)
+        self.actions_array = np.array(self.actions, dtype=object)
+        self.discount = discount
+        self.num_states = int(num_states)
+        self.state_to_index = state_to_index
+        self.exploration_prob = exploration_prob
+        self.q = np.full((self.num_states, len(self.actions)), initial_q, dtype=np.float64)
+        self.num_iters = 0
+
+    def get_action(self, state, explore=True):
+        if explore:
+            self.num_iters += 1
+        exploration_prob = self.exploration_prob
+        if self.num_iters < 2e4:
+            exploration_prob = 1.0
+        elif self.num_iters > 1e5:
+            exploration_prob = exploration_prob / math.log(self.num_iters - 100000 + 1)
+        state_idx = int(self.state_to_index(state))
+        if explore and random.random() < exploration_prob:
+            return random.choice(self.actions)
+        best_action_idx = int(np.argmax(self.q[state_idx]))
+        return self.actions[best_action_idx]
+
+    def get_step_size(self):
+        return 0.1
+
+    def incorporate_feedback(self, state, action, reward, next_state, terminal):
+        state_idx = int(self.state_to_index(state))
+        matches = np.where(self.actions_array == action)[0]
+        action_idx = int(matches[0])
+        eta = self.get_step_size()
+        if terminal:
+            v_next = 0.0
+        else:
+            next_idx = int(self.state_to_index(next_state))
+            v_next = np.max(self.q[next_idx])
+        target = reward + self.discount * v_next
+        self.q[state_idx, action_idx] += eta * (target - self.q[state_idx, action_idx])
+
+
+class FunctionApproxQLearning(util.RLAlgorithm):
+    def __init__(self, feature_dim, feature_extractor, actions, discount, exploration_prob=0.2):
+        self.feature_dim = feature_dim
+        self.feature_extractor = feature_extractor
+        self.actions = actions
+        self.discount = discount
+        self.exploration_prob = exploration_prob
+        self.w = np.random.standard_normal(size=(feature_dim, len(actions)))
+        self.num_iters = 0
+
+    def get_q(self, state, action):
+        features = self.feature_extractor(state)
+        action_idx = self.actions.index(action)
+        return float(features @ self.w[:, action_idx])
+
+    def get_action(self, state, explore=True):
+        if explore:
+            self.num_iters += 1
+        exploration_prob = self.exploration_prob
+        if self.num_iters < 2e4:
+            exploration_prob = 1.0
+        elif self.num_iters > 1e5:
+            exploration_prob = exploration_prob / math.log(self.num_iters - 100000 + 1)
+        if explore and random.random() < exploration_prob:
+            return random.choice(self.actions)
+        q_values = [self.get_q(state, a) for a in self.actions]
+        return self.actions[int(np.argmax(q_values))]
+
+    def get_step_size(self):
+        return 0.005 * (0.99)**(self.num_iters / 500)
+
+    def incorporate_feedback(self, state, action, reward, next_state, terminal):
+        eta = self.get_step_size()
+        features = self.feature_extractor(state)
+        action_idx = self.actions.index(action)
+        q_old = float(features @ self.w[:, action_idx])
+        if terminal:
+            v_next = 0.0
+        else:
+            q_next = [self.get_q(next_state, a) for a in self.actions]
+            v_next = max(q_next)
+        target = reward + self.discount * v_next
+        self.w[:, action_idx] += eta * (target - q_old) * features
+
+
 def train_value_iteration(num_training_trials=1000, num_test_trials=20, num_runs=3, bins=10):
     all_train_rewards = []
 
@@ -163,29 +262,90 @@ def train_value_iteration(num_training_trials=1000, num_test_trials=20, num_runs
     return all_train_rewards
 
 
-def plot_rewards(all_train_rewards, window=50):
+def train_tabular(num_training_trials=1000, num_test_trials=20, num_runs=3, bins=10):
+    all_train_rewards = []
+
+    for run in range(num_runs):
+        print(f"\n{'='*60}")
+        print(f"Trial {run + 1}/{num_runs}")
+        print(f"{'='*60}")
+
+        mdp = DiscreteGymMDP("MountainCar-v0", feature_bins=bins, discount=0.99)
+        rl = TabularQLearning(
+            actions=mdp.actions,
+            discount=mdp.discount,
+            num_states=mdp.num_states,
+            state_to_index=mdp.state_to_index,
+            exploration_prob=0.2,
+        )
+
+        train_rewards = simulate(mdp, rl, num_trials=num_training_trials, train=True, verbose=True)
+        all_train_rewards.append(train_rewards)
+
+        print(f"\nTesting trial {run + 1}...")
+        test_rewards = simulate(mdp, rl, num_trials=num_test_trials, train=False, verbose=False)
+        print(f"Test avg reward: {np.mean(test_rewards):.2f}")
+
+    with open("tabular_weights.pkl", "wb") as f:
+        pickle.dump({"q": rl.q}, f)
+    print("\nWeights saved to tabular_weights.pkl")
+
+    return all_train_rewards
+
+
+def train_function_approximation(num_training_trials=1000, num_test_trials=20, num_runs=3):
+    all_train_rewards = []
+
+    for run in range(num_runs):
+        print(f"\n{'='*60}")
+        print(f"Trial {run + 1}/{num_runs}")
+        print(f"{'='*60}")
+
+        mdp = ContinuousGymMDP("MountainCar-v0", discount=0.999)
+        rl = FunctionApproxQLearning(
+            feature_dim=36,
+            feature_extractor=lambda s: fourier_feature_extractor(s, max_coeff=5, scale=[1, 15]),
+            actions=mdp.actions,
+            discount=mdp.discount,
+            exploration_prob=0.2,
+        )
+
+        train_rewards = simulate(mdp, rl, num_trials=num_training_trials, train=True, verbose=True)
+        all_train_rewards.append(train_rewards)
+
+        print(f"\nTesting trial {run + 1}...")
+        test_rewards = simulate(mdp, rl, num_trials=num_test_trials, train=False, verbose=False)
+        print(f"Test avg reward: {np.mean(test_rewards):.2f}")
+
+    with open("fa_weights.pkl", "wb") as f:
+        pickle.dump({"w": rl.w}, f)
+    print("\nWeights saved to fa_weights.pkl")
+
+    return all_train_rewards
+
+
+def plot_rewards(all_train_rewards, title, filename, window=50):
     fig, ax = plt.subplots(figsize=(10, 6))
 
     for i, rewards in enumerate(all_train_rewards):
-        # Compute rolling average
         rolling = np.convolve(rewards, np.ones(window) / window, mode='valid')
         ax.plot(range(window - 1, len(rewards)), rolling, label=f"Trial {i + 1}", alpha=0.8)
 
     ax.set_xlabel("Episode")
     ax.set_ylabel(f"Reward ({window}-episode rolling avg)")
-    ax.set_title("Model-Based Value Iteration: Training Reward per Episode")
+    ax.set_title(title)
     ax.legend()
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig("vi_training_curves.png", dpi=150)
-    print("Plot saved to vi_training_curves.png")
+    plt.savefig(filename, dpi=150)
+    print(f"Plot saved to {filename}")
     plt.show()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Train Mountain Car RL agents")
     parser.add_argument("--agent", type=str, required=True,
-                        choices=["value-iteration"],
+                        choices=["value-iteration", "tabular", "function-approximation"],
                         help="Agent type to train")
     parser.add_argument("--num-trials", type=int, default=1000,
                         help="Number of training episodes per run")
@@ -201,7 +361,20 @@ def main():
             num_runs=args.num_runs,
             bins=args.bins,
         )
-        plot_rewards(all_rewards)
+        plot_rewards(all_rewards, "Model-Based Value Iteration: Training Reward", "vi_training_curves.png")
+    elif args.agent == "tabular":
+        all_rewards = train_tabular(
+            num_training_trials=args.num_trials,
+            num_runs=args.num_runs,
+            bins=args.bins,
+        )
+        plot_rewards(all_rewards, "Tabular Q-Learning: Training Reward", "tabular_training_curves.png")
+    elif args.agent == "function-approximation":
+        all_rewards = train_function_approximation(
+            num_training_trials=args.num_trials,
+            num_runs=args.num_runs,
+        )
+        plot_rewards(all_rewards, "Function Approximation Q-Learning: Training Reward", "fa_training_curves.png")
 
 
 if __name__ == "__main__":

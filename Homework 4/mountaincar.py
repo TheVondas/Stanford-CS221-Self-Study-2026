@@ -5,9 +5,41 @@ import gymnasium as gym
 from util_rl import ContinuousGymMDP, DiscreteGymMDP, RandomAgent, FixedRLAlgorithm, simulate
 
 
+def fourier_feature_extractor(state, max_coeff=5, scale=None):
+    if scale is None:
+        scale = np.ones_like(state)
+    coeffs = np.arange(max_coeff + 1)
+    curr = coeffs * scale[0] * state[0]
+    for i in range(1, len(state)):
+        new = coeffs * scale[i] * state[i]
+        curr = (curr.reshape(-1, 1) + new.reshape(1, -1)).flatten()
+    return np.cos(np.pi * curr)
+
+
+class FunctionApproxFixedAgent(FixedRLAlgorithm):
+    """Agent that uses pre-trained function approximation weights."""
+    def __init__(self, w, feature_extractor, actions, exploration_prob=0.0):
+        self.w = w
+        self.feature_extractor = feature_extractor
+        self.actions = actions
+        self.exploration_prob = exploration_prob
+
+    def get_action(self, state, explore=True):
+        import random as _random
+        if explore and _random.random() < self.exploration_prob:
+            return _random.choice(self.actions)
+        features = self.feature_extractor(state)
+        q_values = features @ self.w
+        return self.actions[int(np.argmax(q_values))]
+
+    def incorporate_feedback(self, state, action, reward, next_state, terminal):
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Mountain Car RL")
-    parser.add_argument("--agent", type=str, default="naive", choices=["naive", "value-iteration"],
+    parser.add_argument("--agent", type=str, default="naive",
+                        choices=["naive", "value-iteration", "tabular", "function-approximation"],
                         help="Agent type to use")
     parser.add_argument("--mdp", type=str, default="discrete", choices=["continuous", "discrete"],
                         help="MDP type: continuous or discrete")
@@ -37,13 +69,30 @@ def main():
         with open("vi_weights.pkl", "rb") as f:
             weights = pickle.load(f)
         pi_actions = weights["pi_actions"]
-        # Build policy dict mapping discretized states to actions
         pi = {}
         for i in range(len(pi_actions)):
             state = mdp.index_to_state(i)
             if pi_actions[i] is not None:
                 pi[state] = pi_actions[i]
         agent = FixedRLAlgorithm(pi, mdp.actions, exploration_prob=0.0)
+    elif args.agent == "tabular":
+        with open("tabular_weights.pkl", "rb") as f:
+            weights = pickle.load(f)
+        q = weights["q"]
+        pi = {}
+        for i in range(q.shape[0]):
+            state = mdp.index_to_state(i)
+            pi[state] = mdp.actions[int(np.argmax(q[i]))]
+        agent = FixedRLAlgorithm(pi, mdp.actions, exploration_prob=0.0)
+    elif args.agent == "function-approximation":
+        with open("fa_weights.pkl", "rb") as f:
+            weights = pickle.load(f)
+        agent = FunctionApproxFixedAgent(
+            w=weights["w"],
+            feature_extractor=lambda s: fourier_feature_extractor(s, max_coeff=5, scale=[1, 15]),
+            actions=mdp.actions,
+            exploration_prob=0.0,
+        )
 
     print(f"Running Mountain Car with {args.agent} agent ({args.mdp} MDP)")
     print(f"Number of trials: {args.num_trials}")
