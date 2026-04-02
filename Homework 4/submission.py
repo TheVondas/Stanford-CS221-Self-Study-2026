@@ -253,7 +253,10 @@ class TabularQLearning(util.RLAlgorithm):
             exploration_prob = exploration_prob / math.log(self.num_iters - 100000 + 1)
         state_idx = int(self.state_to_index(state))
         # BEGIN_YOUR_CODE (our solution is 4 line(s) of code, but don't worry if you deviate from this)
-        raise Exception("Not implemented yet")
+        if explore and random.random() < exploration_prob:
+            return random.choice(self.actions)
+        best_action_idx = int(np.argmax(self.q[state_idx]))
+        return self.actions[best_action_idx]
         # END_YOUR_CODE
 
     # Call this function to get the step size to update the weights.
@@ -267,7 +270,14 @@ class TabularQLearning(util.RLAlgorithm):
         matches = np.where(self.actions_array == action)[0]
         action_idx = int(matches[0])
         # BEGIN_YOUR_CODE (our solution is 9 line(s) of code, but don't worry if you deviate from this)
-        raise Exception("Not implemented yet")
+        eta = self.get_step_size()
+        if terminal:
+            v_next = 0.0
+        else:
+            next_idx = int(self.state_to_index(next_state))
+            v_next = np.max(self.q[next_idx])
+        target = reward + self.discount * v_next
+        self.q[state_idx, action_idx] += eta * (target - self.q[state_idx, action_idx])
         # END_YOUR_CODE
 
 ############################################################
