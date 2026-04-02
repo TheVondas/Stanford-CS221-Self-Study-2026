@@ -305,7 +305,12 @@ def fourier_feature_extractor(
     # doing efficient arithmetic broadcasting in numpy.
 
     # BEGIN_YOUR_CODE (our solution is 7 line(s) of code, but don't worry if you deviate from this)
-    raise Exception("Not implemented yet")
+    coeffs = np.arange(max_coeff + 1)
+    curr = coeffs * scale[0] * state[0]
+    for i in range(1, len(state)):
+        new = coeffs * scale[i] * state[i]
+        curr = (curr.reshape(-1, 1) + new.reshape(1, -1)).flatten()
+    features = np.cos(np.pi * curr)
     # END_YOUR_CODE
 
     return features
